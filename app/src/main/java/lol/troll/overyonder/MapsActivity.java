@@ -1,7 +1,9 @@
 package lol.troll.overyonder;
 
+import android.app.FragmentManager;
 import android.content.pm.PackageManager;
 import android.location.Location;
+import android.os.Build;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
@@ -17,16 +19,23 @@ import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.MapFragment;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 
+import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.maps.model.PolylineOptions;
+import com.google.maps.GeoApiContext;
+import com.google.maps.model.DirectionsResult;
+import com.google.maps.model.EncodedPolyline;
+import com.google.maps.model.TravelMode;
 
 public class MapsActivity extends FragmentActivity implements OnMapReadyCallback,
-                                                              GoogleApiClient.ConnectionCallbacks,
-                                                              GoogleApiClient.OnConnectionFailedListener,
-                                                              LocationListener {
+        GoogleApiClient.ConnectionCallbacks,
+        GoogleApiClient.OnConnectionFailedListener,
+        LocationListener {
 
     private static final String LOCATION_KEY = "LAST_KNOWN_LOCATION";
 
@@ -43,11 +52,18 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         ensureGoogleApiClientExists();
 
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
-        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
-                .findFragmentById(R.id.map);
+        SupportMapFragment mapFragment = this.getMapFragment();
         mapFragment.getMapAsync(this);
 
         updateValuesFromBundle(savedInstanceState);
+    }
+
+    private SupportMapFragment getMapFragment() {
+        android.support.v4.app.FragmentManager fragmentManager = getSupportFragmentManager();
+        SupportMapFragment supportMapFragment = (SupportMapFragment) fragmentManager
+                .findFragmentById(R.id.map);
+        return supportMapFragment;
+//        return (MapFragment) getFragmentManager().findFragmentById(R.id.map);
     }
 
     private void ensureGoogleApiClientExists() {
@@ -61,24 +77,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         }
     }
 
-
-    /**
-     * Manipulates the map once available.
-     * This callback is triggered when the map is ready to be used.
-     * This is where we can add markers or lines, add listeners or move the camera. In this case,
-     * we just add a marker near Sydney, Australia.
-     * If Google Play services is not installed on the device, the user will be prompted to install
-     * it inside the SupportMapFragment. This method will only be triggered once the user has
-     * installed Google Play services and returned to the app.
-     */
     @Override
     public void onMapReady(GoogleMap googleMap) {
         this.googleMap = googleMap;
-
-        // Add a marker in Sydney and move the camera
-        LatLng sydney = new LatLng(-34, 151);
-        googleMap.addMarker(new MarkerOptions().position(sydney).title("Marker in Sydney"));
-        googleMap.moveCamera(CameraUpdateFactory.newLatLng(sydney));
     }
 
     @Override
@@ -99,6 +100,15 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
      */
     @Override
     public void onConnected(@Nullable Bundle bundle) {
+        startGettingLocationUpdates();
+    }
+
+    private void startGettingLocationUpdates() {
+        LocationRequest locationRequest = new LocationRequest();
+        locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+        locationRequest.setInterval(5000);
+
+
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             // TODO: Consider calling
             //    ActivityCompat#requestPermissions
@@ -109,17 +119,21 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             // for ActivityCompat#requestPermissions for more details.
             return;
         }
-
-        LocationRequest locationRequest = new LocationRequest();
-        locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
-        locationRequest.setInterval(5000);
-
         LocationServices.FusedLocationApi.requestLocationUpdates(googleApiClient, locationRequest, this);
-        /*Location lastLoc = LocationServices.FusedLocationApi.getLastLocation(googleApiClient);
-        if (lastLoc == null) {
-            Toast.makeText(this, "No last known location, cannot say where you are", Toast.LENGTH_SHORT);
-        } else {
-        }*/
+    }
+
+    private EncodedPolyline getPathToLocation(com.google.maps.model.LatLng start, com.google.maps.model.LatLng destination) throws Exception {
+        GeoApiContext context = new GeoApiContext()
+                .setApiKey(this.getResources().getString(R.string.google_maps_key));
+
+        DirectionsResult result = com.google.maps.DirectionsApi.newRequest(context)
+                .mode(TravelMode.WALKING)
+                .origin(start)
+                .destination(destination)
+                .await();
+
+        EncodedPolyline thingToDrawOnMap = result.routes[0].overviewPolyline;
+        return thingToDrawOnMap;
     }
 
     @Override
@@ -130,8 +144,38 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         centerMapAtLastKnownLocation();
     }
 
+    private Marker lastPaintedPos;
     private void centerMapAtLastKnownLocation() {
-        googleMap.moveCamera(CameraUpdateFactory.newLatLng(new LatLng(lastLoc.getLatitude(), lastLoc.getLongitude())));
+        if (lastPaintedPos != null) {
+            lastPaintedPos.remove();
+        }
+        LatLng pos = new LatLng(lastLoc.getLatitude(), lastLoc.getLongitude());
+
+        lastPaintedPos = googleMap.addMarker(new MarkerOptions().position(pos).title("Current pos"));
+        googleMap.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 12f));
+
+
+        com.google.maps.model.LatLng source = new com.google.maps.model.LatLng(lastLoc.getLatitude(), lastLoc.getLongitude());
+        com.google.maps.model.LatLng destination = new com.google.maps.model.LatLng(lastLoc.getLatitude(), lastLoc.getLongitude() + 0.05);
+        tryPaintLineBetweenLocs(source, destination);
+    }
+
+    private void tryPaintLineBetweenLocs(com.google.maps.model.LatLng source, com.google.maps.model.LatLng destination) {
+        try {
+            PolylineOptions line = getPolyLineFormLocs(source, destination);
+            googleMap.addPolyline(line);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @NonNull
+    private PolylineOptions getPolyLineFormLocs(com.google.maps.model.LatLng source, com.google.maps.model.LatLng destination) throws Exception {
+        PolylineOptions line = new PolylineOptions();
+        for(com.google.maps.model.LatLng pointOnLine : getPathToLocation(source, destination).decodePath()) {
+            line.add(new LatLng(pointOnLine.lat, pointOnLine.lng));
+        }
+        return line;
     }
 
     /**
